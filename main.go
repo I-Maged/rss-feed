@@ -1,50 +1,71 @@
 package main
 
 import (
-	"fmt"
+	"database/sql"
 	"log"
 	"net/http"
 	"os"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
-
-	// "github.com/go-chi/chi/v5/middleware"
 	"github.com/joho/godotenv"
+
+	"github.com/I-Maged/rss-feed/internal/database"
+
+	_ "github.com/lib/pq"
 )
 
+type apiConfig struct {
+	DB *database.Queries
+}
+
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
+	godotenv.Load(".env")
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		log.Fatal("PORT environment variable is not set")
 	}
-	portString := os.Getenv("PORT")
-	fmt.Println("PORT:", portString)
+
+	dbURL := os.Getenv("DP_URL")
+	if dbURL == "" {
+		log.Fatal("DP_URL environment variable is not set")
+	}
+
+	conn, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	dbQueries := database.New(conn)
+
+	apiCfg := apiConfig{
+		DB: dbQueries,
+	}
 
 	router := chi.NewRouter()
 
 	router.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"https://*", "http://*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		AllowedHeaders:   []string{"*"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: false,
 		MaxAge:           300,
 	}))
 
 	v1Router := chi.NewRouter()
+
+	v1Router.Post("/users", apiCfg.handlerUsersCreate)
+
 	v1Router.Get("/healthz", handlerReadiness)
 	v1Router.Get("/err", handlerErr)
 
 	router.Mount("/v1", v1Router)
-
 	srv := &http.Server{
+		Addr:    ":" + port,
 		Handler: router,
-		Addr:    ":" + portString,
 	}
-	log.Printf("Server started on port: %v", portString)
-	srvErr := srv.ListenAndServe()
-	if srvErr != nil {
-		log.Fatal(srvErr)
-	}
+
+	log.Printf("Serving on port: %s\n", port)
+	log.Fatal(srv.ListenAndServe())
 }
